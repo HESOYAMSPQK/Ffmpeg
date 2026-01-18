@@ -8,6 +8,8 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import subprocess
 import os
+import sys
+import platform
 import threading
 import tempfile
 from PIL import Image, ImageTk
@@ -18,6 +20,15 @@ import re
 import random
 import string
 import uuid
+
+# Определение платформы
+IS_WINDOWS = platform.system() == "Windows"
+
+def run_subprocess(cmd, **kwargs):
+    """Запуск subprocess с правильной обработкой creationflags для разных платформ"""
+    if IS_WINDOWS and 'creationflags' not in kwargs:
+        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+    return subprocess.run(cmd, **kwargs)
 
 # Настройка темы
 ctk.set_appearance_mode("dark")
@@ -1076,7 +1087,7 @@ class FFmpegPreviewEditor(ctk.CTk):
                 self.video_path
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            result = run_subprocess(cmd, capture_output=True, text=True)
             info = json.loads(result.stdout)
             
             stream = info.get("streams", [{}])[0]
@@ -1108,7 +1119,7 @@ class FFmpegPreviewEditor(ctk.CTk):
                 "-of", "json",
                 self.video_path
             ]
-            result_audio = subprocess.run(cmd_audio, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            result_audio = run_subprocess(cmd_audio, capture_output=True, text=True)
             audio_info = json.loads(result_audio.stdout)
             audio_stream = audio_info.get("streams", [{}])
             if audio_stream:
@@ -1584,11 +1595,10 @@ class FFmpegPreviewEditor(ctk.CTk):
                 
             cmd = self.build_ffmpeg_command(self.video_path, tmp_path, preview_mode=True)
             
-            result = subprocess.run(
+            result = run_subprocess(
                 cmd, 
                 capture_output=True, 
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                text=True
             )
             
             if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
@@ -1711,21 +1721,30 @@ class FFmpegPreviewEditor(ctk.CTk):
                 
                 self.after(0, lambda: self.refresh_btn.configure(text="⏳"))
                 
-                result = subprocess.run(
+                result = run_subprocess(
                     cmd,
                     capture_output=True,
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    text=True
                 )
                 
                 if result.returncode == 0 and os.path.exists(tmp_path):
-                    # Открыть видео в плеере по умолчанию
-                    os.startfile(tmp_path)
+                    # Открыть видео в плеере по умолчанию (кроссплатформенно)
+                    if IS_WINDOWS:
+                        os.startfile(tmp_path)
+                    elif platform.system() == "Darwin":  # macOS
+                        subprocess.run(["open", tmp_path])
+                    else:  # Linux
+                        subprocess.run(["xdg-open", tmp_path])
                 else:
-                    self.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка рендеринга:\n{result.stderr[:500]}"))
+                    error_msg = result.stderr[:500] if result.stderr else "Неизвестная ошибка"
+                    error_full = f"Ошибка рендеринга:\n{error_msg}"
+                    self.after(0, lambda msg=error_full: messagebox.showerror("Ошибка", msg))
                     
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Ошибка", str(e)))
+                # Явно копируем ошибку, чтобы избежать проблем с замыканием
+                error_str = str(e)
+                error_full = f"Ошибка:\n{error_str}"
+                self.after(0, lambda msg=error_full: messagebox.showerror("Ошибка", msg))
             finally:
                 self.after(0, lambda: self.refresh_btn.configure(text="🔄"))
                 
@@ -1900,20 +1919,25 @@ class FFmpegPreviewEditor(ctk.CTk):
             try:
                 cmd = self.build_ffmpeg_command(self.video_path, output_path, preview_mode=False)
                 
-                result = subprocess.run(
+                result = run_subprocess(
                     cmd,
                     capture_output=True,
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    text=True
                 )
                 
                 if result.returncode == 0:
-                    self.after(0, lambda: messagebox.showinfo("Готово", f"Видео сохранено:\n{output_path}"))
+                    success_msg = f"Видео сохранено:\n{output_path}"
+                    self.after(0, lambda msg=success_msg: messagebox.showinfo("Готовo", msg))
                 else:
-                    self.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка FFmpeg:\n{result.stderr[:500]}"))
+                    error_msg = result.stderr[:500] if result.stderr else "Неизвестная ошибка"
+                    error_full = f"Ошибка FFmpeg:\n{error_msg}"
+                    self.after(0, lambda msg=error_full: messagebox.showerror("Ошибка", msg))
                     
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Ошибка", str(e)))
+                # Явно копируем ошибку, чтобы избежать проблем с замыканием
+                error_str = str(e)
+                error_full = f"Ошибка:\n{error_str}"
+                self.after(0, lambda msg=error_full: messagebox.showerror("Ошибка", msg))
             finally:
                 self.after(0, lambda: self.export_btn.configure(text="💾 Экспорт видео", state="normal"))
                 
